@@ -21,49 +21,46 @@ jobs:
         sudo apt-get install -y build-essential libncurses-dev bison flex libssl-dev \
                                bc cpio kmod rsync wget xz-utils patch git curl jq
 
-    - name: 3. Get Latest XanMod-RT Tag
-      id: get_tag
-      run: |
-        # 使用 GitHub API 获取 xanmod/linux 的所有标签，过滤出 rt 分支的标签，并取最新的一条
-        LATEST_TAG=$(curl -s "https://api.github.com/repos/xanmod/linux/tags" | jq -r '.[] | .name' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+-rt[0-9]+-xanmod[0-9]+$' | head -n 1)
-        
-        if [ -z "$LATEST_TAG" ]; then
-          echo "Error: Could not fetch the latest xanmod-rt tag."
-          exit 1
-        fi
-        
-        echo "Latest Tag: $LATEST_TAG"
-        echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
-
-    - name: 4. Cache ccache
+    - name: 3. Cache ccache
       uses: actions/cache@v4
       with:
         path: ~/.ccache
-        key: ${{ runner.os }}-kernel-ccache-${{ steps.get_tag.outputs.tag }}
+        key: ${{ runner.os }}-kernel-ccache-xanmod-rt
         restore-keys: |
           ${{ runner.os }}-kernel-ccache-
 
-    - name: 5. Clone Specific Tag Source
+    - name: 4. Clone XanMod-RT Branch from GitLab
       run: |
-        git clone --depth 1 --branch ${{ steps.get_tag.outputs.tag }} https://github.com/xanmod/linux.git linux-xanmod-rt
+        # 直接克隆 GitLab 上的 6.18-rt 分支（最新源码）
+        git clone --depth 1 --branch 6.18-rt https://gitlab.com/xanmod/linux.git linux-xanmod-rt
 
-    - name: 6. Apply Custom Version (-innuos-02)
+    - name: 5. Apply Custom Version (-rt-innuos-02) - Force Override
       working-directory: linux-xanmod-rt
       run: |
-        # 生成默认配置 (如果你有自己定制的 config，可以在这里替换)
+        # 生成默认配置
         make defconfig
         
-        # 注入自定义后缀
-        sed -i 's/CONFIG_LOCALVERSION=".*"/CONFIG_LOCALVERSION="-innuos-02"/' .config
-        sed -i 's/CONFIG_LOCALVERSION_AUTO=y/# CONFIG_LOCALVERSION_AUTO is not set/' .config
+        # === 完全替换 LOCALVERSION（核心步骤）===
+        # 1. 强制设置 CONFIG_LOCALVERSION 为 "-rt-innuos-02"（覆盖源码原有值）
+        sed -i 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION="-rt-innuos-02"/' .config
         
-        # 启用 ccache 加速
-        sed -i 's/# CONFIG_CCACHE is not set/CONFIG_CCACHE=y/' .config
+        # 2. 禁用自动追加版本号（防止 Git 哈希干扰）
+        sed -i 's/^CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/' .config
         
-        grep "CONFIG_LOCALVERSION" .config
-        grep "CONFIG_CCACHE" .config
+        # 3. 删除源码中所有 localversion* 文件（彻底清除 XanMod 自带的后缀）
+        rm -f localversion*
+        
+        # 4. 启用 ccache 加速编译
+        sed -i 's/^# CONFIG_CCACHE is not set/CONFIG_CCACHE=y/' .config
+        
+        # === 验证配置 ===
+        echo "--- Final .config LOCALVERSION settings ---"
+        grep "LOCALVERSION" .config
+        
+        echo "--- Expected Kernel Release Name ---"
+        make kernelrelease
 
-    - name: 7. Compile Kernel
+    - name: 6. Compile Kernel
       working-directory: linux-xanmod-rt
       run: |
         # 设置 ccache 参数
@@ -71,16 +68,16 @@ jobs:
         export CCACHE_MAXSIZE=4G
         ccache -z
         
-        # 开始编译 (仅编译核心与模块，跳过 deb 打包以节省时间)
+        # 开始编译（仅核心与模块，跳过打包以节省时间）
         make -j$(nproc) bzImage modules
         
         # 显示 ccache 统计信息
         ccache -s
 
-    - name: 8. Upload Artifacts
+    - name: 7. Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: linux-xanmod-rt-${{ steps.get_tag.outputs.tag }}-innuos-02
+        name: linux-xanmod-rt-6.18.29-rt-innuos-02
         path: |
           linux-xanmod-rt/arch/x86/boot/bzImage
           linux-xanmod-rt/vmlinux
