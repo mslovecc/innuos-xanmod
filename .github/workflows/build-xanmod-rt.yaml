@@ -15,15 +15,16 @@ jobs:
       - name: 1. Checkout repository
         uses: actions/checkout@v4
 
-      - name: 2. Install build dependencies
+      - name: 2. Install build dependencies (including ccache)
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential libncurses-dev bison flex libssl-dev \
             bc cpio kmod rsync wget xz-utils patch git curl jq \
-            dwarves
+            dwarves \
+            ccache   # ← 这里添加了 ccache
 
-      - name: 3. Set up ccache
+      - name: 3. Set up ccache cache
         uses: actions/cache@v4
         with:
           path: ~/.ccache
@@ -34,7 +35,6 @@ jobs:
 
       - name: 4. Clone XanMod kernel source (6.18-rt branch)
         run: |
-          # 现在这个分支是确认存在的
           git clone --depth 1 --branch 6.18-rt https://gitlab.com/xanmod/linux.git linux-xanmod-rt
           echo "KERNEL_SOURCE_DIR=$(pwd)/linux-xanmod-rt" >> $GITHUB_ENV
 
@@ -47,8 +47,7 @@ jobs:
           ./scripts/config --set-str CONFIG_LOCALVERSION "-rt-innuos-02"
           ./scripts/config --disable CONFIG_LOCALVERSION_AUTO
 
-          # 由于是 -rt 分支，PREEMPT_RT 应该已默认启用，此步可省略
-          # 但保留以确保配置正确
+          # 确保 PREEMPT_RT 开启（分支已默认开启，但保险起见）
           ./scripts/config --enable CONFIG_PREEMPT
           ./scripts/config --enable CONFIG_PREEMPT_RT
 
