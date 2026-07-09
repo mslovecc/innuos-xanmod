@@ -1,4 +1,4 @@
-name: Build XanMod 6.18-rt Kernel (DEB packages)
+name: Build XanMod 6.18-rt Kernel (v4)
 
 on:
   schedule:
