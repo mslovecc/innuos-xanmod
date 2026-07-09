@@ -1,0 +1,82 @@
+name: Build XanMod 6.18-rt Kernel
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'  # 每周一 UTC 0:00
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Compile XanMod 6.18-rt
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: 1. Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 2. Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential libncurses-dev bison flex libssl-dev \
+            bc cpio kmod rsync wget xz-utils patch git curl jq \
+            dwarves
+
+      - name: 3. Set up ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-ccache-xanmod-6.18-rt-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-xanmod-6.18-rt-
+            ${{ runner.os }}-ccache-
+
+      - name: 4. Clone XanMod kernel source (6.18-rt branch)
+        run: |
+          # 现在这个分支是确认存在的
+          git clone --depth 1 --branch 6.18-rt https://gitlab.com/xanmod/linux.git linux-xanmod-rt
+          echo "KERNEL_SOURCE_DIR=$(pwd)/linux-xanmod-rt" >> $GITHUB_ENV
+
+      - name: 5. Configure kernel and set custom localversion
+        working-directory: linux-xanmod-rt
+        run: |
+          make defconfig
+
+          # 设置自定义版本号
+          ./scripts/config --set-str CONFIG_LOCALVERSION "-rt-innuos-02"
+          ./scripts/config --disable CONFIG_LOCALVERSION_AUTO
+
+          # 由于是 -rt 分支，PREEMPT_RT 应该已默认启用，此步可省略
+          # 但保留以确保配置正确
+          ./scripts/config --enable CONFIG_PREEMPT
+          ./scripts/config --enable CONFIG_PREEMPT_RT
+
+          make olddefconfig
+
+          echo "KERNEL_RELEASE=$(make kernelrelease)" >> $GITHUB_ENV
+          echo "Kernel release will be: $(make kernelrelease)"
+
+      - name: 6. Compile kernel and modules
+        working-directory: linux-xanmod-rt
+        env:
+          CCACHE_DIR: ~/.ccache
+          CCACHE_MAXSIZE: 5G
+        run: |
+          ccache -z
+          make -j$(nproc) bzImage modules
+          ccache -s
+
+      - name: 7. Prepare artifacts
+        working-directory: linux-xanmod-rt
+        run: |
+          mkdir -p ../artifacts
+          cp arch/x86/boot/bzImage ../artifacts/
+          cp System.map ../artifacts/
+
+      - name: 8. Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ env.KERNEL_RELEASE }}
+          path: artifacts/
+          retention-days: 7
