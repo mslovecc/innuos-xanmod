@@ -2,7 +2,7 @@ name: Build XanMod 6.18-rt Kernel (DEB packages)
 
 on:
   schedule:
-    - cron: '0 0 * * 1'  # 每周一 UTC 0:00
+    - cron: '0 0 * * 1'
   workflow_dispatch:
 
 jobs:
@@ -18,6 +18,7 @@ jobs:
       - name: 2. Install all build and packaging dependencies
         run: |
           sudo apt-get update
+          # 安装基础编译工具和常用库
           sudo apt-get install -y \
             autoconf \
             bc \
@@ -48,7 +49,10 @@ jobs:
             wget \
             xz-utils \
             zstd
-          # 额外确保所有 Linux 内核构建依赖已安装
+          # 启用 deb-src 源（用于 build-dep）
+          sudo sed -i '/^# deb-src /s/^# //' /etc/apt/sources.list
+          sudo apt-get update
+          # 自动安装所有 Linux 内核构建依赖（确保无遗漏）
           sudo apt-get build-dep -y linux
 
       - name: 3. Set up ccache cache
@@ -84,19 +88,16 @@ jobs:
           CCACHE_MAXSIZE: 5G
         run: |
           ccache -z
-          # 使用 deb-pkg 目标直接生成 .deb 包（包含内核、头文件、调试符号等）
+          # 使用 deb-pkg 构建 Debian 安装包（会自动生成 linux-image, linux-headers 等）
           make -j$(nproc) deb-pkg
           ccache -s
 
       - name: 7. Collect .deb packages
         run: |
-          # make deb-pkg 会在源码目录的上一级生成 .deb 文件
           mkdir -p artifacts
-          # 复制所有生成的 .deb 文件（包括 linux-image, linux-headers, linux-libc-dev 等）
+          # make deb-pkg 在上层目录生成 .deb 文件
           cp ../*.deb artifacts/ || true
-          # 也可能生成 .dsc 和 .changes，一并复制
           cp ../*.dsc ../*.changes artifacts/ || true
-          # 列出文件以供调试
           ls -la artifacts/
 
       - name: 8. Upload .deb artifacts
