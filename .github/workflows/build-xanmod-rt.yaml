@@ -1,4 +1,4 @@
-name: Build XanMod 6.18-rt Kernel
+name: Build XanMod 6.18-rt Kernel (DEB packages)
 
 on:
   schedule:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    name: Compile XanMod 6.18-rt
+    name: Build and package XanMod 6.18-rt
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -15,14 +15,41 @@ jobs:
       - name: 1. Checkout repository
         uses: actions/checkout@v4
 
-      - name: 2. Install build dependencies (including ccache)
+      - name: 2. Install all build and packaging dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential libncurses-dev bison flex libssl-dev \
-            bc cpio kmod rsync wget xz-utils patch git curl jq \
+            autoconf \
+            bc \
+            bison \
+            build-essential \
+            ccache \
+            cpio \
+            curl \
+            debhelper \
+            devscripts \
+            dkms \
             dwarves \
-            ccache   # ← 这里添加了 ccache
+            fakeroot \
+            flex \
+            gawk \
+            git \
+            kernel-wedge \
+            libcap-dev \
+            libelf-dev \
+            libiberty-dev \
+            libncurses-dev \
+            libpci-dev \
+            libssl-dev \
+            libudev-dev \
+            openssl \
+            python3 \
+            rsync \
+            wget \
+            xz-utils \
+            zstd
+          # 额外确保所有 Linux 内核构建依赖已安装
+          sudo apt-get build-dep -y linux
 
       - name: 3. Set up ccache cache
         uses: actions/cache@v4
@@ -42,40 +69,39 @@ jobs:
         working-directory: linux-xanmod-rt
         run: |
           make defconfig
-
-          # 设置自定义版本号
           ./scripts/config --set-str CONFIG_LOCALVERSION "-rt-innuos-02"
           ./scripts/config --disable CONFIG_LOCALVERSION_AUTO
-
-          # 确保 PREEMPT_RT 开启（分支已默认开启，但保险起见）
           ./scripts/config --enable CONFIG_PREEMPT
           ./scripts/config --enable CONFIG_PREEMPT_RT
-
           make olddefconfig
-
           echo "KERNEL_RELEASE=$(make kernelrelease)" >> $GITHUB_ENV
           echo "Kernel release will be: $(make kernelrelease)"
 
-      - name: 6. Compile kernel and modules
+      - name: 6. Build kernel and generate .deb packages
         working-directory: linux-xanmod-rt
         env:
           CCACHE_DIR: ~/.ccache
           CCACHE_MAXSIZE: 5G
         run: |
           ccache -z
-          make -j$(nproc) bzImage modules
+          # 使用 deb-pkg 目标直接生成 .deb 包（包含内核、头文件、调试符号等）
+          make -j$(nproc) deb-pkg
           ccache -s
 
-      - name: 7. Prepare artifacts
-        working-directory: linux-xanmod-rt
+      - name: 7. Collect .deb packages
         run: |
-          mkdir -p ../artifacts
-          cp arch/x86/boot/bzImage ../artifacts/
-          cp System.map ../artifacts/
+          # make deb-pkg 会在源码目录的上一级生成 .deb 文件
+          mkdir -p artifacts
+          # 复制所有生成的 .deb 文件（包括 linux-image, linux-headers, linux-libc-dev 等）
+          cp ../*.deb artifacts/ || true
+          # 也可能生成 .dsc 和 .changes，一并复制
+          cp ../*.dsc ../*.changes artifacts/ || true
+          # 列出文件以供调试
+          ls -la artifacts/
 
-      - name: 8. Upload artifacts
+      - name: 8. Upload .deb artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-${{ env.KERNEL_RELEASE }}
+          name: kernel-${{ env.KERNEL_RELEASE }}-deb
           path: artifacts/
           retention-days: 7
