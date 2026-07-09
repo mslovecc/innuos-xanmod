@@ -1,0 +1,89 @@
+name: Build XanMod 6.18-rt Kernel (v5)
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and package XanMod 6.18-rt
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: 1. Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 2. Install all build and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf bc bison build-essential ccache cpio curl \
+            debhelper devscripts dkms dwarves fakeroot flex gawk git \
+            kernel-wedge libcap-dev libdw-dev libelf-dev libiberty-dev \
+            libncurses-dev libpci-dev libssl-dev libudev-dev openssl \
+            python3 rsync wget xz-utils zstd
+
+      - name: 3. Set up ccache cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-ccache-xanmod-6.18-rt-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-xanmod-6.18-rt-
+            ${{ runner.os }}-ccache-
+
+      - name: 4. Clone XanMod kernel source (6.18-rt branch)
+        run: |
+          git clone --depth 1 --branch 6.18-rt https://gitlab.com/xanmod/linux.git linux-xanmod-rt
+          echo "KERNEL_SOURCE_DIR=$(pwd)/linux-xanmod-rt" >> $GITHUB_ENV
+
+      - name: 5. Configure kernel (保持 XanMod 默认版本号)
+        working-directory: linux-xanmod-rt
+        run: |
+          make defconfig
+          ./scripts/config --enable CONFIG_PREEMPT
+          ./scripts/config --enable CONFIG_PREEMPT_RT
+          make olddefconfig
+          echo "KERNEL_RELEASE=$(make kernelrelease)" >> $GITHUB_ENV
+          echo "Kernel release will be: $(make kernelrelease)"
+
+      - name: 6. Build kernel and generate .deb packages
+        working-directory: linux-xanmod-rt
+        env:
+          CCACHE_DIR: ~/.ccache
+          CCACHE_MAXSIZE: 5G
+        run: |
+          ccache -z
+          make -j$(nproc) deb-pkg
+          ccache -s
+
+      - name: 7. Collect .deb packages
+        run: |
+          mkdir -p artifacts
+          find . .. -maxdepth 2 -name "*.deb" -exec cp {} artifacts/ \;
+          echo "Collected files:"
+          ls -la artifacts/
+
+      - name: 8. Upload .deb artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ env.KERNEL_RELEASE }}-deb
+          path: artifacts/
+          retention-days: 7
+
+      - name: 9. Create GitHub Release and upload .deb packages
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Kernel ${{ env.KERNEL_RELEASE }}"
+          tag_name: "v${{ env.KERNEL_RELEASE }}"
+          files: artifacts/*.deb
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
