@@ -36,6 +36,7 @@ jobs:
             git \
             kernel-wedge \
             libcap-dev \
+            libdw-dev \
             libelf-dev \
             libiberty-dev \
             libncurses-dev \
